@@ -27,9 +27,17 @@
 #include <soc.h>
 #include <zephyr/linker/linker-defs.h>
 
-#include <cmsis_core.h>
+#if defined(CONFIG_BOOT_DISABLE_CACHES)
+#include <zephyr/cache.h>
+#endif
 
+#if defined(CONFIG_ARM)
+#include <cmsis_core.h>
+#endif
+
+#include "io/io.h"
 #include "target.h"
+
 #include "bootutil/bootutil_log.h"
 #include "bootutil/image.h"
 #include "bootutil/bootutil.h"
@@ -73,7 +81,7 @@ static bool is_button_pressed(void) {
 }
 
 /* Check if Espressif target is supported */
-#ifdef CONFIG_SOC_FAMILY_ESP32
+#ifdef CONFIG_SOC_FAMILY_ESPRESSIF_ESP32
 
 #include <bootloader_init.h>
 #include <esp_loader.h>
@@ -94,7 +102,7 @@ static bool is_button_pressed(void) {
 #define IMAGE1_PRIMARY_SIZE \
           DT_PROP_BY_IDX(DT_NODE_BY_FIXED_PARTITION_LABEL(image_1), reg, 1)
 
-#endif /* CONFIG_SOC_FAMILY_ESP32 */
+#endif /* CONFIG_SOC_FAMILY_ESPRESSIF_ESP32 */
 
 #ifdef CONFIG_FW_INFO
 #include <fw_info.h>
@@ -290,7 +298,14 @@ static void do_boot(struct boot_rsp *rsp)
 #endif
 
 #if defined(CONFIG_FW_INFO) && !defined(CONFIG_EXT_API_PROVIDE_EXT_API_UNUSED)
-    const struct fw_info *firmware_info = fw_info_find((uint32_t) vt);
+    uintptr_t fw_start_addr;
+
+    rc = flash_device_base(rsp->br_flash_dev_id, &fw_start_addr);
+    assert(rc == 0);
+
+    fw_start_addr += rsp->br_image_off + rsp->br_hdr->ih_hdr_size;
+
+    const struct fw_info *firmware_info = fw_info_find(fw_start_addr);
     bool provided = fw_info_ext_api_provide(firmware_info, true);
 
 #ifdef PM_S0_ADDRESS
@@ -313,9 +328,11 @@ static void do_boot(struct boot_rsp *rsp)
     cleanup_arm_nvic(); /* cleanup NVIC registers */
 
 #ifdef CONFIG_CPU_CORTEX_M_HAS_CACHE
-    /* Disable instruction cache and data cache before chain-load the application */
-    SCB_DisableDCache();
-    SCB_DisableICache();
+    /* Flush and disable instruction/data caches before chain-loading the application */
+    (void)sys_cache_instr_flush_all();
+    (void)sys_cache_data_flush_all();
+    sys_cache_instr_disable();
+    sys_cache_data_disable();
 #endif
 
 #if CONFIG_CPU_HAS_ARM_MPU || CONFIG_CPU_HAS_NXP_MPU
@@ -361,7 +378,7 @@ static void do_boot(struct boot_rsp *rsp)
 
 #elif defined(CONFIG_XTENSA) || defined(CONFIG_RISCV)
 
-#ifndef CONFIG_SOC_FAMILY_ESP32
+#ifndef CONFIG_SOC_FAMILY_ESPRESSIF_ESP32
 
 #define SRAM_BASE_ADDRESS	0xBE030000
 
@@ -390,7 +407,7 @@ static void copy_img_to_SRAM(int slot, unsigned int hdr_offset)
 done:
     flash_area_close(fap);
 }
-#endif /* !CONFIG_SOC_FAMILY_ESP32 */
+#endif /* !CONFIG_SOC_FAMILY_ESPRESSIF_ESP32 */
 
 /* Entry point (.ResetVector) is at the very beginning of the image.
  * Simply copy the image to a suitable location and jump there.
@@ -402,7 +419,7 @@ static void do_boot(struct boot_rsp *rsp)
     BOOT_LOG_INF("br_image_off = 0x%x\n", rsp->br_image_off);
     BOOT_LOG_INF("ih_hdr_size = 0x%x\n", rsp->br_hdr->ih_hdr_size);
 
-#ifdef CONFIG_SOC_FAMILY_ESP32
+#ifdef CONFIG_SOC_FAMILY_ESPRESSIF_ESP32
     int slot = (rsp->br_image_off == IMAGE0_PRIMARY_START_ADDRESS) ?
                 PRIMARY_SLOT : SECONDARY_SLOT;
     /* Load memory segments and start from entry point */
@@ -414,7 +431,7 @@ static void do_boot(struct boot_rsp *rsp)
     /* Jump to entry point */
     start = (void *)(SRAM_BASE_ADDRESS + rsp->br_hdr->ih_hdr_size);
     ((void (*)(void))start)();
-#endif /* CONFIG_SOC_FAMILY_ESP32 */
+#endif /* CONFIG_SOC_FAMILY_ESPRESSIF_ESP32 */
 }
 
 #else
@@ -585,7 +602,7 @@ static void boot_serial_enter()
     int rc;
 
 #ifdef CONFIG_MCUBOOT_INDICATION_LED
-    gpio_pin_set_dt(&led0, 1);
+    io_led_set(1);
 #endif
 
     mcuboot_status_change(MCUBOOT_STATUS_SERIAL_DFU_ENTERED);
@@ -623,7 +640,7 @@ int main(void)
 
 #ifdef CONFIG_MCUBOOT_INDICATION_LED
     /* LED init */
-    led_init();
+    io_led_init();
 #endif
 
     os_heap_init();
@@ -635,25 +652,22 @@ int main(void)
     mcuboot_status_change(MCUBOOT_STATUS_STARTUP);
 
 #ifdef CONFIG_BOOT_SERIAL_ENTRANCE_GPIO
-    if (detect_pin() &&
-            !boot_skip_serial_recovery()) {
+    if (io_detect_pin() &&
+            !io_boot_skip_serial_recovery()) {
         boot_serial_enter();
     }
 #endif
 
 #ifdef CONFIG_BOOT_SERIAL_PIN_RESET
-    rc = hwinfo_get_reset_cause(&reset_cause);
-
-    if (rc == 0 && reset_cause == RESET_PIN) {
-        (void)hwinfo_clear_reset_cause();
+    if (io_detect_pin_reset()) {
         boot_serial_enter();
     }
 #endif
 
 #if defined(CONFIG_BOOT_USB_DFU_GPIO)
-    if (detect_pin()) {
+    if (io_detect_pin()) {
 #ifdef CONFIG_MCUBOOT_INDICATION_LED
-        gpio_pin_set_dt(&led0, 1);
+        io_led_set(1);
 #endif
 
         mcuboot_status_change(MCUBOOT_STATUS_USB_DFU_ENTERED);
@@ -692,6 +706,10 @@ int main(void)
     rc = boot_console_init();
     int timeout_in_ms = CONFIG_BOOT_SERIAL_WAIT_FOR_DFU_TIMEOUT;
     uint32_t start = k_uptime_get_32();
+    
+#ifdef CONFIG_MCUBOOT_INDICATION_LED
+    io_led_set(1);
+#endif
 #endif
 
     // Check if the button (sw0) is pressed
@@ -713,9 +731,7 @@ int main(void)
     FIH_CALL(boot_go, fih_rc, &rsp);
 
 #ifdef CONFIG_BOOT_SERIAL_BOOT_MODE
-    boot_mode = bootmode_check(BOOT_MODE_TYPE_BOOTLOADER);
-
-    if (boot_mode == 1) {
+    if (io_detect_boot_mode()) {
         /* Boot mode to stay in bootloader, clear status and enter serial
          * recovery mode
          */
@@ -731,6 +747,10 @@ int main(void)
         timeout_in_ms = 1;
     }
     boot_serial_check_start(&boot_funcs,timeout_in_ms);
+
+#ifdef CONFIG_MCUBOOT_INDICATION_LED
+    io_led_set(0);
+#endif
 #endif
 
     if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
