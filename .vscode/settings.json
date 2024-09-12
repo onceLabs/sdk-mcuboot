@@ -1,0 +1,8 @@
+{
+  "nrf-connect.applications": [
+    "${workspaceFolder}/boot/zephyr"
+  ],
+  "nrf-connect.boardRoots": [
+    "${workspaceFolder}/boot/zephyr"
+  ]
+}
