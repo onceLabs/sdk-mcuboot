@@ -1,0 +1,13 @@
+# Copyright (c) 2024 Nordic Semiconductor ASA
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_BT832F_FOB
+
+config BOARD
+	default "bt832f_fob"
+
+config BT_CTLR
+   default BT
+
+
+endif
