@@ -327,7 +327,7 @@ static void do_boot(struct boot_rsp *rsp)
 #if CONFIG_MCUBOOT_CLEANUP_ARM_CORE
     cleanup_arm_nvic(); /* cleanup NVIC registers */
 
-#ifdef CONFIG_CPU_CORTEX_M_HAS_CACHE
+#if defined(CONFIG_BOOT_DISABLE_CACHES)
     /* Flush and disable instruction/data caches before chain-loading the application */
     (void)sys_cache_instr_flush_all();
     (void)sys_cache_data_flush_all();
@@ -706,7 +706,7 @@ int main(void)
     rc = boot_console_init();
     int timeout_in_ms = CONFIG_BOOT_SERIAL_WAIT_FOR_DFU_TIMEOUT;
     uint32_t start = k_uptime_get_32();
-    
+
 #ifdef CONFIG_MCUBOOT_INDICATION_LED
     io_led_set(1);
 #endif
