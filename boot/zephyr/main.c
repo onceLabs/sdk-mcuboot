@@ -45,7 +45,6 @@
 #include "bootutil/mcuboot_status.h"
 #include "flash_map_backend/flash_map_backend.h"
 
-/* GPIO-related code */
 #define BUTTON_NODE DT_ALIAS(sw0)
 
 #if DT_NODE_HAS_STATUS(BUTTON_NODE, okay)
@@ -57,27 +56,24 @@ static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(BUTTON_NODE, gpios);
 static bool is_button_pressed(void) {
     int ret;
 
-    // Check if the GPIO device is ready
     if (!device_is_ready(button.port)) {
         BOOT_LOG_ERR("Button GPIO device is not ready");
         return false;
     }
 
-    // Configure the button GPIO as an input
     ret = gpio_pin_configure_dt(&button, GPIO_INPUT);
     if (ret != 0) {
         BOOT_LOG_ERR("Failed to configure button GPIO");
         return false;
     }
 
-    // Read the button state (active-low)
     int value = gpio_pin_get_dt(&button);
     if (value < 0) {
         BOOT_LOG_ERR("Failed to read button state");
         return false;
     }
 
-    return (value == 0);  // Return true if button is pressed (active-low)
+    return (value == 0);
 }
 
 /* Check if Espressif target is supported */
@@ -207,7 +203,6 @@ static inline bool boot_skip_serial_recovery()
 
 BOOT_LOG_MODULE_REGISTER(mcuboot);
 
-/* Validate serial recovery configuration */
 #ifdef CONFIG_MCUBOOT_SERIAL
 #if !defined(CONFIG_BOOT_SERIAL_ENTRANCE_GPIO) && \
     !defined(CONFIG_BOOT_SERIAL_WAIT_FOR_DFU) && \
@@ -220,10 +215,6 @@ BOOT_LOG_MODULE_REGISTER(mcuboot);
 
 #ifdef CONFIG_MCUBOOT_INDICATION_LED
 
-/*
- * The led0 devicetree alias is optional. If present, we'll use it
- * to turn on the LED whenever the button is pressed.
- */
 #if DT_NODE_EXISTS(DT_ALIAS(mcuboot_led0))
 #define LED0_NODE DT_ALIAS(mcuboot_led0)
 #elif DT_NODE_EXISTS(DT_ALIAS(bootloader_led0))
@@ -234,7 +225,6 @@ BOOT_LOG_MODULE_REGISTER(mcuboot);
 #if DT_NODE_HAS_STATUS(LED0_NODE, okay) && DT_NODE_HAS_PROP(LED0_NODE, gpios)
 static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 #else
-/* A build error here means your board isn't set up to drive an LED. */
 #error "Unsupported board: led0 devicetree alias is not defined"
 #endif
 
@@ -566,7 +556,6 @@ static bool detect_pin(void)
             k_busy_wait(50000);
 #endif
 
-            /* Get the uptime for debounce purposes. */
             int64_t timestamp = k_uptime_get();
 
             for(;;) {
@@ -574,10 +563,8 @@ static bool detect_pin(void)
                 pin_active = rc;
                 __ASSERT(rc >= 0, "Failed to read boot detect pin.\n");
 
-                /* Get delta from when this started */
                 uint32_t delta = k_uptime_get() -  timestamp;
 
-                /* If not pressed OR if pressed > debounce period, stop. */
                 if (delta >= BUTTON_0_DETECT_DELAY || !pin_active) {
                     break;
                 }
@@ -712,18 +699,15 @@ int main(void)
 #endif
 #endif
 
-    // Check if the button (sw0) is pressed
     bool button_pressed = is_button_pressed();
 
     BOOT_LOG_INF("Button pressed: %d", button_pressed);
 
     // Boot the selected firmware image based on the button press state
     if (button_pressed) {
-        // Boot Image 1 (Slot 1) if button is pressed
         BOOT_LOG_INF("Booting from Slot 1");
         FIH_CALL(boot_set_pending, fih_rc, 1);
     } else {
-        // Boot Image 0 (Slot 0) if button is not pressed
         BOOT_LOG_INF("Booting from Slot 0");
         FIH_CALL(boot_set_pending, fih_rc, 0);
     }
